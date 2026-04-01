@@ -1,7 +1,13 @@
 using Microsoft.AspNetCore.Mvc;
 using System.ComponentModel.DataAnnotations;
+using Microsoft.Data.SqlClient;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Добавляем сервисы, если нужно (Swagger и т.д.)
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
 var app = builder.Build();
 
 // Хранилище заметок в оперативной памяти (In-memory)
@@ -19,11 +25,10 @@ app.MapGet("/api/notes/{id}", (int id) =>
     return note is not null ? Results.Ok(note) : Results.NotFound(new { error = "Заметка не найдена" });
 });
 
-// 3. POST /api/notes — Создать заметку (с валидацией)
+// 3. POST /api/notes — Создать заметку
 app.MapPost("/api/notes", ([FromBody] NoteDTO dto) =>
 {
-    // Минимальная валидация (Задание 4.3)
-    if (string.IsNullOrWhiteSpace(dto.Title)) 
+    if (string.IsNullOrWhiteSpace(dto.Title))
         return Results.BadRequest(new { error = "Заголовок не может быть пустым" });
 
     var newNote = new Note
@@ -47,40 +52,52 @@ app.MapDelete("/api/notes/{id}", (int id) =>
     notes.Remove(note);
     return Results.NoContent();
 });
-// Добавьте этот эндпоинт в основную часть программы (где остальные app.MapGet)
 
-app.MapGet("/db/ping", () => 
+// --- ПРОВЕРКА БАЗЫ ДАННЫХ (Задание 5/8) ---
+
+app.MapGet("/db/ping", async (IConfiguration configuration) =>
 {
-    // Получаем строку подключения из appsettings.json
-    var connectionString = builder.Configuration.GetConnectionString("Mssql");
+    var connectionString = configuration.GetConnectionString("Mssql");
 
     if (string.IsNullOrEmpty(connectionString))
     {
         return Results.Problem("Конфигурация ConnectionStrings:Mssql не найдена!", statusCode: 500);
     }
 
-    try 
+    try
     {
-        // Здесь в будущем будет реальная проверка через Microsoft.Data.SqlClient
-        // На данном этапе, так как БД еще нет, мы имитируем попытку
-        // Если база не развернута, это вызовет исключение, что соответствует заданию
-        throw new Exception("SQL Server еще не развернут (ожидаемая ошибка)");
+        using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        return Results.Ok(new
+        {
+            status = "ok",
+            message = "Соединение установлено",
+            details = $"Успешный пинг БД {connection.Database}",
+            configured_string = connectionString.Replace("Password=YourStrong!Passw0rd", "Password=***")
+        });
     }
     catch (Exception ex)
     {
-        return Results.Json(new { 
-            status = "error", 
-            message = "Ошибка подключения к БД", 
+        return Results.Json(new
+        {
+            status = "error",
+            message = "Ошибка подключения к БД",
             details = ex.Message,
-            configured_string = connectionString 
+            configured_string = connectionString
         }, statusCode: 503);
     }
 });
+
+// --- СЕРВИСНЫЕ ЭНДПОИНТЫ ---
+
+app.MapGet("/health", () => "Healthy");
+app.MapGet("/version", (IConfiguration conf) => conf["App:Version"] ?? "unknown");
+
 app.Run();
 
-// --- МОДЕЛИ ДАННЫХ (Задание 4.1) ---
+// --- МОДЕЛИ ДАННЫХ ---
 
-// Сущность "Заметка"
 public class Note
 {
     public int Id { get; set; }
@@ -89,5 +106,4 @@ public class Note
     public DateTime CreatedAt { get; set; }
 }
 
-// Объект для получения данных (DTO)
 public record NoteDTO(string Title, string Text);
